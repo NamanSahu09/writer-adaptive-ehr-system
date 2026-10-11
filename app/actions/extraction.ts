@@ -112,6 +112,7 @@ export async function runExtraction(cardId: number) {
   const user = await requireUser()
 
   if (
+    !process.env.ML_SERVICE_URL &&
     !process.env.GEMINI_API_KEY &&
     !process.env.GOOGLE_GENERATIVE_AI_API_KEY &&
     !process.env.OPENAI_API_KEY
@@ -182,39 +183,68 @@ export async function runExtraction(cardId: number) {
       }
     }
 
-    let modelInstance: any = DEFAULT_MODEL
+    let extractedObject: any = null
     let modelName = DEFAULT_MODEL
-    if (process.env.GEMINI_API_KEY) {
-      const customGoogle = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY })
-      modelInstance = customGoogle('gemini-3.6-flash')
-      modelName = 'google/gemini-3.6-flash'
-    } else if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      const customGoogle = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY })
-      modelInstance = customGoogle('gemini-3.6-flash')
-      modelName = 'google/gemini-3.6-flash'
-    } else if (process.env.OPENAI_API_KEY) {
-      const customOpenAI = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })
-      modelInstance = customOpenAI('gpt-4o')
-      modelName = 'openai/gpt-4o'
+    const start = Date.now()
+
+    if (process.env.ML_SERVICE_URL) {
+      try {
+        const formData = new FormData()
+        formData.append('file', new Blob([new Uint8Array(imageBuffer)]), 'opd_card.jpg')
+        if (card.doctorId) formData.append('doctor_id', String(card.doctorId))
+        formData.append('style_profile_json', JSON.stringify(doctorContext.profile || {}))
+
+        const mlRes = await fetch(`${process.env.ML_SERVICE_URL}/api/extract`, {
+          method: 'POST',
+          body: formData,
+        })
+        if (mlRes.ok) {
+          const mlData = await mlRes.json()
+          if (mlData.prediction?.structured) {
+            extractedObject = mlData.prediction.structured
+            modelName = mlData.prediction.modelUsed || 'custom-ml/writer-adaptive-vlm'
+          }
+        }
+      } catch (err) {
+        console.warn('Custom ML service unreachable, falling back to LLM:', err)
+      }
     }
 
-    const start = Date.now()
-    const { object } = await generateObject({
-      model: modelInstance,
-      schema: extractionSchema,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: buildPrompt(doctorContext) },
-            { type: 'image', image: imageBuffer },
-          ],
-        },
-      ],
-    })
-    const elapsed = Date.now() - start
+    if (!extractedObject) {
+      let modelInstance: any = DEFAULT_MODEL
+      if (process.env.GEMINI_API_KEY) {
+        const customGoogle = createGoogleGenerativeAI({ apiKey: process.env.GEMINI_API_KEY })
+        modelInstance = customGoogle('gemini-3.6-flash')
+        modelName = 'google/gemini-3.6-flash'
+      } else if (process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+        const customGoogle = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY })
+        modelInstance = customGoogle('gemini-3.6-flash')
+        modelName = 'google/gemini-3.6-flash'
+      } else if (process.env.OPENAI_API_KEY) {
+        const customOpenAI = createOpenAI({ apiKey: process.env.OPENAI_API_KEY })
+        modelInstance = customOpenAI('gpt-4o')
+        modelName = 'openai/gpt-4o'
+      }
 
-    const { rawText, fieldConfidence, overallConfidence, ...structured } = object
+      const { object } = await generateObject({
+        model: modelInstance,
+        schema: extractionSchema,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: buildPrompt(doctorContext) },
+              { type: 'image', image: imageBuffer },
+            ],
+          },
+        ],
+      })
+      extractedObject = object
+    }
+
+    const elapsed = Date.now() - start
+    const { rawText, fieldConfidence, overallConfidence, ...structured } = extractedObject
+
 
     const [row] = await db
       .insert(extractedData)

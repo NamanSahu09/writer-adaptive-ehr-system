@@ -188,3 +188,17 @@ export const auditLogs = pgTable('audit_logs', {
   ipAddress: text('ip_address'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 })
+
+export const trainingJobs = pgTable('training_jobs', {
+  id: serial('id').primaryKey(),
+  doctorId: integer('doctor_id'),
+  status: text('status').notNull().default('pending'),
+  samplesCount: integer('samples_count').default(0),
+  adapterPath: text('adapter_path'),
+  metrics: jsonb('metrics').default({}),
+  errorMessage: text('error_message'),
+  startedAt: timestamp('started_at'),
+  completedAt: timestamp('completed_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+})
+

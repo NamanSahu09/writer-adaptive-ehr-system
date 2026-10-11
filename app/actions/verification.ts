@@ -126,6 +126,25 @@ export async function verifyExtraction(input: {
     .set({ status: 'verified', updatedAt: new Date() })
     .where(eq(opdCards.id, input.cardId))
 
+  // 6. Push verified pairwise ground-truth to ML adaptive training service
+  if (process.env.ML_SERVICE_URL) {
+    try {
+      fetch(`${process.env.ML_SERVICE_URL}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cardId: input.cardId,
+          doctorId: card.doctorId,
+          originalData: input.structuredData,
+          verifiedData: input.structuredData,
+          corrections: input.corrections,
+        }),
+      }).catch((err) => console.warn('ML feedback service notification failed:', err))
+    } catch (e) {
+      // non-blocking
+    }
+  }
+
   await logAudit({
     userId: user.id,
     action: 'verify',
